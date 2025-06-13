@@ -1,5 +1,6 @@
 gunicorn
 flask
+flask-cors
 opencv-python
 easyocr
 pandas
