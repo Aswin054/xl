@@ -6,7 +6,7 @@ from ultralytics import YOLO
 import os
 
 # Load YOLO model
-model = YOLO("license_plate_detector(1) (1).pt")
+model = YOLO("license_plate_detector.pt")
 
 # OCR reader
 reader = easyocr.Reader(['en'])
