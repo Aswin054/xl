@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>License Plate Detection</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+        }
+        .video-container {
+            position: relative;
+            width: 100%;
+            margin: 20px 0;
+        }
+        #videoInput {
+            width: 100%;
+            background: #000;
+        }
+        #canvasOutput {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        button {
+            padding: 10px 15px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        #startBtn {
+            background: #2ecc71;
+            color: white;
+        }
+        #stopBtn {
+            background: #e74c3c;
+            color: white;
+        }
+        #downloadBtn {
+            background: #3498db;
+            color: white;
+        }
+        button:disabled {
+            background: #95a5a6;
+            cursor: not-allowed;
+        }
+        .results {
+            margin-top: 20px;
+        }
+        .plate-list {
+            max-height: 300px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 10px;
+        }
+        .plate-item {
+            padding: 8px;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            justify-content: space-between;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            text-align: center;
+        }
+        .processing {
+            background: #f39c12;
+            color: white;
+        }
+        .success {
+            background: #2ecc71;
+            color: white;
+        }
+        .error {
+            background: #e74c3c;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>License Plate Detection System</h1>
+        
+        <div class="controls">
+            <select id="inputType">
+                <option value="webcam">Webcam</option>
+                <option value="file">Video File</option>
+            </select>
+            
+            <input type="file" id="videoFile" accept="video/*" style="display: none;">
+            
+            <button id="startBtn">Start</button>
+            <button id="stopBtn" disabled>Stop</button>
+            <button id="downloadBtn" disabled>Download Results</button>
+        </div>
+        
+        <div class="video-container">
+            <video id="videoInput" autoplay playsinline muted></video>
+            <canvas id="canvasOutput"></canvas>
+        </div>
+        
+        <div id="status" class="status" style="display: none;"></div>
+        
+        <div class="results">
+            <h3>Detected Plates</h3>
+            <div class="plate-list" id="plateList">
+                <div class="plate-item">No plates detected yet</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // DOM Elements
+        const videoInput = document.getElementById('videoInput');
+        const canvasOutput = document.getElementById('canvasOutput');
+        const ctx = canvasOutput.getContext('2d');
+        const inputType = document.getElementById('inputType');
+        const videoFile = document.getElementById('videoFile');
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const plateList = document.getElementById('plateList');
+        const statusDiv = document.getElementById('status');
+        
+        // State
+        let mediaStream = null;
+        let processing = false;
+        let detectedPlates = [];
+        let downloadUrl = '';
+        
+        // Event Listeners
+        inputType.addEventListener('change', () => {
+            if (inputType.value === 'file') {
+                videoFile.style.display = 'inline-block';
+            } else {
+                videoFile.style.display = 'none';
+            }
+        });
+        
+        videoFile.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                videoInput.src = URL.createObjectURL(e.target.files[0]);
+            }
+        });
+        
+        startBtn.addEventListener('click', startDetection);
+        stopBtn.addEventListener('click', stopDetection);
+        downloadBtn.addEventListener('click', () => {
+            window.open(downloadUrl, '_blank');
+        });
+        
+        // Functions
+        async function startDetection() {
+            try {
+                detectedPlates = [];
+                updatePlateList();
+                
+                if (inputType.value === 'webcam') {
+                    mediaStream = await navigator.mediaDevices.getUserMedia({ 
+                        video: { facingMode: 'environment' }, 
+                        audio: false 
+                    });
+                    videoInput.srcObject = mediaStream;
+                    
+                    videoInput.onloadedmetadata = () => {
+                        canvasOutput.width = videoInput.videoWidth;
+                        canvasOutput.height = videoInput.videoHeight;
+                        processing = true;
+                        processFrame();
+                    };
+                } else {
+                    if (!videoFile.files.length) {
+                        showStatus('Please select a video file', 'error');
+                        return;
+                    }
+                    
+                    processing = true;
+                    const formData = new FormData();
+                    formData.append('video', videoFile.files[0]);
+                    
+                    showStatus('Processing video...', 'processing');
+                    
+                    const response = await fetch('/api/upload', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    const data = await response.json();
+                    if (data.error) {
+                        throw new Error(data.error);
+                    }
+                    
+                    detectedPlates = data.detected_plates || [];
+                    downloadUrl = data.download_url || '';
+                    updatePlateList();
+                    showStatus('Processing complete', 'success');
+                    downloadBtn.disabled = false;
+                }
+                
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                inputType.disabled = true;
+                videoFile.disabled = true;
+                
+            } catch (error) {
+                console.error('Error:', error);
+                showStatus(`Error: ${error.message}`, 'error');
+                stopDetection();
+            }
+        }
+        
+        function stopDetection() {
+            processing = false;
+            
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+                mediaStream = null;
+                videoInput.srcObject = null;
+            }
+            
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+            inputType.disabled = false;
+            videoFile.disabled = false;
+            
+            showStatus('Detection stopped', 'success');
+        }
+        
+        async function processFrame() {
+            if (!processing) return;
+            
+            // Capture frame
+            ctx.drawImage(videoInput, 0, 0, canvasOutput.width, canvasOutput.height);
+            
+            // Convert to blob
+            const blob = await new Promise(resolve => 
+                canvasOutput.toBlob(resolve, 'image/jpeg', 0.8)
+            );
+            
+            // Send to API
+            const formData = new FormData();
+            formData.append('frame', blob, 'frame.jpg');
+            
+            try {
+                const response = await fetch('/api/detect', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                // Clear previous drawings
+                ctx.clearRect(0, 0, canvasOutput.width, canvasOutput.height);
+                
+                // Draw new detections
+                if (data.detections && data.detections.length > 0) {
+                    data.detections.forEach(det => {
+                        const [x1, y1, x2, y2] = det.bbox;
+                        
+                        // Draw bounding box
+                        ctx.strokeStyle = '#00FF00';
+                        ctx.lineWidth = 3;
+                        ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+                        
+                        // Draw text background
+                        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                        ctx.fillRect(x1, y1 - 30, x2 - x1, 30);
+                        
+                        // Draw plate text
+                        ctx.fillStyle = '#FFFF00';
+                        ctx.font = 'bold 16px Arial';
+                        ctx.fillText(
+                            `${det.text} (${Math.round(det.confidence * 100)}%)`, 
+                            x1 + 10, 
+                            y1 - 10
+                        );
+                    });
+                    
+                    // Get updated plates list
+                    const platesResponse = await fetch('/api/plates');
+                    const platesData = await platesResponse.json();
+                    detectedPlates = platesData;
+                    updatePlateList();
+                    
+                    if (detectedPlates.length > 0) {
+                        downloadBtn.disabled = false;
+                    }
+                }
+                
+            } catch (error) {
+                console.error('Detection error:', error);
+            }
+            
+            // Continue processing
+            if (processing) {
+                requestAnimationFrame(processFrame);
+            }
+        }
+        
+        function updatePlateList() {
+            if (detectedPlates.length === 0) {
+                plateList.innerHTML = '<div class="plate-item">No plates detected yet</div>';
+                return;
+            }
+            
+            plateList.innerHTML = detectedPlates.map(plate => `
+                <div class="plate-item">
+                    <span>${plate.text}</span>
+                    <span>${plate.time}</span>
+                </div>
+            `).join('');
+        }
+        
+        function showStatus(message, type) {
+            statusDiv.textContent = message;
+            statusDiv.className = `status ${type}`;
+            statusDiv.style.display = 'block';
+        }
+    </script>
+</body>
+</html>

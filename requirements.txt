@@ -1,0 +1,17 @@
+flask
+opencv-python
+easyocr
+pandas
+ultralytics
+numpy
+python-dateutil
+pytz
+six
+torch
+torchvision
+pyyaml
+tqdm
+requests
+pillow
+scipy
+
